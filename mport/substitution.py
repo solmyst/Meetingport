@@ -1,8 +1,11 @@
 """Kawarimi log (or a user PNG) composited onto the empty room after a Naruto vanish.
 
 No copied anime assets: the default log is generated in NumPy/OpenCV (bark, growth
-rings, branch stubs). A custom PNG with alpha can be used instead.
+rings, branch stubs). A custom PNG with alpha can be used instead. After a vanish the
+log falls in from above (gravity ease-in + a short bounce) and lands on the person's
+last seat, timed with the smoke puff.
 """
+import math
 import os
 import cv2
 import numpy as np
@@ -11,6 +14,7 @@ LOG_HEIGHT_FRAC = 0.50      # of the person bbox height (~torso)
 LOG_ASPECT = 0.42           # unrotated width / height
 TILT_DEG = -13.0            # slight clockwise lean (top to the right), planted at the base
 MODES = ("log", "none", "image")
+DROP_FALL_FRAC = 0.72       # portion of the drop spent falling; the rest is the bounce/settle
 
 
 def person_bbox(mask):
@@ -222,6 +226,31 @@ def prepare_substitution(mode, mask, shape, image_path="", scale=1.0):
     return rgba, placement
 
 
+def drop_y_offset(elapsed, drop_seconds, drop_height, bounce=0.12):
+    """Pixels above the resting base while the log falls in. 0 once it has landed and settled.
+
+    Gravity ease-in for the first DROP_FALL_FRAC of the drop, then a short decaying bounce
+    (thud) that settles on the seat. `drop_height` is typically ~1.15× the log height.
+    """
+    try:
+        dur = float(drop_seconds)
+        height = float(drop_height)
+    except (TypeError, ValueError):
+        return 0.0
+    if dur <= 0 or height <= 0:
+        return 0.0
+    if elapsed is None or elapsed >= dur:
+        return 0.0
+    t = float(np.clip(elapsed / dur, 0.0, 1.0))
+    fall_end = DROP_FALL_FRAC
+    if t <= fall_end:
+        u = t / fall_end
+        return height * (1.0 - u * u)                         # ease-in (accelerates downward)
+    u = (t - fall_end) / max(1e-6, 1.0 - fall_end)
+    # One decaying half-sine bump upward, then rest.
+    return height * float(bounce) * math.sin(math.pi * u) * (1.0 - u)
+
+
 def _rotated_sprite(rgba, tilt_deg):
     """Rotate around the bottom-center so the log stays planted. Returns (rotated BGRA, pivot)."""
     h, w = rgba.shape[:2]
@@ -235,21 +264,25 @@ def _rotated_sprite(rgba, tilt_deg):
     return rot, (cx, cy)
 
 
-def composite_substitution(plate, rgba, placement, alpha=1.0):
+def composite_substitution(plate, rgba, placement, alpha=1.0, drop=0.0):
     """Paste the log onto the clean plate with a soft contact shadow and a light color match.
 
-    `plate` is float32 or uint8 BGR. The result has the same dtype / 0..255 range.
+    `drop` is pixels above the resting base (from drop_y_offset); the contact shadow stays
+    on the seat and only strengthens as the log nears the ground. `plate` is float32 or
+    uint8 BGR. The result has the same dtype / 0..255 range.
     """
     a = float(np.clip(alpha, 0, 1))
     if a <= 0.01 or rgba is None or placement is None: return plate
+    drop = float(max(0.0, drop))
     src_uint8 = plate.dtype == np.uint8
     out = plate.astype(np.float32).copy()
     H, W = out.shape[:2]
     rot, (px, py) = _rotated_sprite(rgba, placement.get("tilt_deg", TILT_DEG))
     x0 = int(round(placement["cx"] - px))
-    y0 = int(round(placement["bottom"] - py))
+    y0 = int(round(placement["bottom"] - py - drop))
 
-    # contact shadow: soft ellipse under the planted base, shifted slightly with the lean
+    # contact shadow: soft ellipse under the planted base. Fades in as the log nears the seat.
+    land = float(np.clip(1.0 - drop / max(1.0, placement["height"] * 0.55), 0.0, 1.0))
     tilt = np.deg2rad(placement.get("tilt_deg", TILT_DEG))
     scx = placement["cx"] - np.sin(tilt) * placement["height"] * 0.08
     scy = placement["bottom"] - 1.0
@@ -258,11 +291,11 @@ def composite_substitution(plate, rgba, placement, alpha=1.0):
     sx0, sx1 = int(np.floor(scx - sw)), int(np.ceil(scx + sw))
     sy0, sy1 = int(np.floor(scy - sh * 1.6)), int(np.ceil(scy + sh * 1.2))
     ax0, ay0, ax1, ay1 = max(0, sx0), max(0, sy0), min(W, sx1), min(H, sy1)
-    if ax1 > ax0 and ay1 > ay0:
+    if ax1 > ax0 and ay1 > ay0 and land > 0.02:
         yy, xx = np.mgrid[ay0:ay1, ax0:ax1].astype(np.float32)
         ell = np.exp(-(((xx - scx) / (sw * 0.50)) ** 2 + ((yy - scy) / (sh * 0.70)) ** 2))
         ell = cv2.GaussianBlur(ell, (0, 0), max(1.0, sw * 0.08))
-        shade = 1.0 - (0.48 * a * np.clip(ell, 0, 1))[..., None]
+        shade = 1.0 - (0.48 * a * land * np.clip(ell, 0, 1))[..., None]
         out[ay0:ay1, ax0:ax1] *= shade
 
     rh, rw = rot.shape[:2]

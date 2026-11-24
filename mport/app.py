@@ -20,6 +20,15 @@ DEFAULTS = {
     "snap_particles": 6000,
     "snap_auto_mute": True,
     "auto_unmute_on_reappear": True,
+    # Stricter snap detector (defaults reject talking-hand false positives):
+    "snap_pinch_frac": 0.18,           # thumb-middle distance, in hand sizes, to count as a pinch
+    "snap_min_pinch": 0.10,            # seconds the snap-ready pinch must be held before a flick counts
+    "snap_flick_window": 0.28,         # max seconds from pinch release to a completed flick
+    "snap_min_sep": 0.38,              # thumb-middle separation after the flick, in hand sizes
+    "snap_min_travel": 0.30,           # middle-tip travel toward the palm, in hand sizes
+    "snap_max_wrist_move": 0.12,       # wrist motion allowed during the gesture, in hand sizes
+    "snap_gesture_cooldown": 0.85,     # refractory after a completed snap gesture
+    "snap_one_hand_only": True,        # never arm/fire a snap while two hands are visible (Naruto/clone/kame)
     "mute_method": "volume",           # volume (system input) | hotkey (meeting app shortcut)
     "meeting_app": "meet",             # meet | zoom | teams  (used only by mute_method=hotkey)
     "gojo_void_seconds": 0,            # 0 = domain stays until dismissed; else auto-collapse after this many seconds fully open
@@ -27,6 +36,8 @@ DEFAULTS = {
     "naruto_substitution": "log",      # log | none | image  (Kawarimi log after a Naruto vanish)
     "substitution_image": "",          # PNG with alpha, used when naruto_substitution is "image"
     "substitution_scale": 1.0,         # size multiplier for the log / custom image
+    "substitution_drop_seconds": 0.55, # how long the Kawarimi log takes to fall in (with the smoke)
+    "substitution_drop_height": 1.15,  # drop start height as a multiple of the log height
     "sound": True, "virtualcam": False, "preview": True,
     "ring_in_output": False,           # charging ring is on the preview only unless true
     "mirror": False, "out": None, "force": "", "log_json": None, "max_seconds": None,
@@ -64,6 +75,15 @@ def parse(argv=None):
     cfg.update({k: v for k, v in a.items() if v is not None and k != "config"})
     return normalize_snap(normalize_substitution(cfg))
 
+def _float_cfg(cfg, key, default, lo=None, hi=None):
+    try:
+        v = float(cfg[key]) if cfg.get(key) not in (None, "") else float(default)
+    except (TypeError, ValueError):
+        v = float(default)
+    if lo is not None: v = max(lo, v)
+    if hi is not None: v = min(hi, v)
+    return v
+
 def normalize_substitution(cfg):
     """Fill / coerce Kawarimi substitution keys so older configs and CLI still work."""
     mode = str(cfg.get("naruto_substitution") or "log").lower().strip()
@@ -77,6 +97,10 @@ def normalize_substitution(cfg):
         scale = 1.0
     cfg["substitution_scale"] = 1.0 if scale <= 0 else scale
     cfg["substitution_image"] = cfg.get("substitution_image") or ""
+    cfg["substitution_drop_seconds"] = _float_cfg(
+        cfg, "substitution_drop_seconds", DEFAULTS["substitution_drop_seconds"], 0.0, 3.0)
+    cfg["substitution_drop_height"] = _float_cfg(
+        cfg, "substitution_drop_height", DEFAULTS["substitution_drop_height"], 0.0, 4.0)
     return cfg
 
 def normalize_snap(cfg):
@@ -96,10 +120,31 @@ def normalize_snap(cfg):
     cfg["snap_particles"] = int(max(200, min(20000, n)))
     cfg["snap_auto_mute"] = bool(cfg.get("snap_auto_mute", True))
     cfg["auto_unmute_on_reappear"] = bool(cfg.get("auto_unmute_on_reappear", True))
+    cfg["snap_pinch_frac"] = _float_cfg(cfg, "snap_pinch_frac", DEFAULTS["snap_pinch_frac"], 0.08, 0.35)
+    cfg["snap_min_pinch"] = _float_cfg(cfg, "snap_min_pinch", DEFAULTS["snap_min_pinch"], 0.0, 1.0)
+    cfg["snap_flick_window"] = _float_cfg(cfg, "snap_flick_window", DEFAULTS["snap_flick_window"], 0.08, 1.0)
+    cfg["snap_min_sep"] = _float_cfg(cfg, "snap_min_sep", DEFAULTS["snap_min_sep"], 0.15, 1.0)
+    cfg["snap_min_travel"] = _float_cfg(cfg, "snap_min_travel", DEFAULTS["snap_min_travel"], 0.10, 1.0)
+    cfg["snap_max_wrist_move"] = _float_cfg(cfg, "snap_max_wrist_move", DEFAULTS["snap_max_wrist_move"], 0.02, 1.0)
+    cfg["snap_gesture_cooldown"] = _float_cfg(cfg, "snap_gesture_cooldown", DEFAULTS["snap_gesture_cooldown"], 0.0, 5.0)
+    cfg["snap_one_hand_only"] = bool(cfg.get("snap_one_hand_only", True))
     method = str(cfg.get("mute_method") or "volume").lower().strip()
     cfg["mute_method"] = method if method in ("volume", "hotkey") else "volume"
     cfg["meeting_app"] = str(cfg.get("meeting_app") or "meet").strip().lower() or "meet"
     return cfg
+
+def snap_watcher_for(cfg):
+    """Build the strict SnapWatcher from config (and the built-in defaults)."""
+    return G.SnapWatcher(
+        pinch_frac=cfg.get("snap_pinch_frac", DEFAULTS["snap_pinch_frac"]),
+        min_pinch=cfg.get("snap_min_pinch", DEFAULTS["snap_min_pinch"]),
+        flick_window=cfg.get("snap_flick_window", DEFAULTS["snap_flick_window"]),
+        min_sep=cfg.get("snap_min_sep", DEFAULTS["snap_min_sep"]),
+        min_travel=cfg.get("snap_min_travel", DEFAULTS["snap_min_travel"]),
+        max_wrist_move=cfg.get("snap_max_wrist_move", DEFAULTS["snap_max_wrist_move"]),
+        cooldown=cfg.get("snap_gesture_cooldown", DEFAULTS["snap_gesture_cooldown"]),
+        one_hand_only=cfg.get("snap_one_hand_only", True),
+    )
 
 def snap_gate_for(cfg, mic_ok):
     """Audio modes need an open microphone. If it failed to open, use the finger-snap gesture."""
@@ -134,8 +179,8 @@ class Meetingport:
         self.capture, self.cap_start = None, 0.0
         self.void_fx, self.void_vis = None, False
         self.void_origin, self.void_t0, self.void_hold_t0 = None, 0.0, 0.0
-        self.substitution, self.sub_bbox = None, None   # Kawarimi log while vanished after Naruto
-        self.snap_watch = G.SnapWatcher()
+        self.substitution, self.sub_bbox, self.sub_t0 = None, None, 0.0   # Kawarimi log while vanished
+        self.snap_watch = snap_watcher_for(cfg)
         self.mic = None
         mic_ok = False
         if cfg.get("gestures") and cfg.get("snap_trigger") in ("audio", "both", "either"):
@@ -240,7 +285,7 @@ class Meetingport:
         else:
             self.last_kind = kind; self.effect = Effect(kind, mask, self.shape, **self._fx_kwargs(kind, frame))
             snd = self.sfx.get((kind, False)); what = "vanish"
-            self._arm_substitution(kind, mask)
+            self._arm_substitution(kind, mask, now=now)
             if kind == "snap":
                 self._maybe_mute()
         self.effect_kind = kind
@@ -248,18 +293,19 @@ class Meetingport:
         print(f"[{now:6.2f}s] {src}: {kind} -> {what}")
         if snd: play(snd)
 
-    def _arm_substitution(self, kind, mask):
+    def _arm_substitution(self, kind, mask, now=None):
         """Remember the person bbox and build the Kawarimi overlay for a Naruto vanish."""
         from .substitution import prepare_substitution, person_bbox
         use_log = kind == "naruto" or (kind == "snap" and self.cfg.get("snap_reveal") == "log")
         if not use_log:
-            self.substitution, self.sub_bbox = None, None
+            self.substitution, self.sub_bbox, self.sub_t0 = None, None, 0.0
             return
         # Snap-to-log reuses the Kawarimi overlay; mode comes from snap_reveal or naruto_substitution.
         mode = self.cfg.get("naruto_substitution", "log") if kind == "naruto" else "log"
         if kind == "snap":
             mode = "log"
         self.sub_bbox = person_bbox(mask)
+        self.sub_t0 = float(now if now is not None else 0.0)
         self.substitution = prepare_substitution(
             mode, mask, self.shape,
             image_path=self.cfg.get("substitution_image") or "",
@@ -290,10 +336,10 @@ class Meetingport:
         return nxt
 
     def _plate_with_substitution(self, plate, now):
-        """Composite the log onto the clean plate, faded with the Naruto puff so smoke covers the swap."""
+        """Composite the log onto the clean plate: falls in with the smoke, then sits until reappear."""
         if self.substitution is None:
             return plate
-        from .substitution import composite_substitution
+        from .substitution import composite_substitution, drop_y_offset
         from .effects import naruto_visibility
         alpha = 1.0
         if self.effect is not None and self.effect.kind == "naruto":
@@ -309,7 +355,14 @@ class Meetingport:
         elif self.trig.present:
             return plate
         rgba, placement = self.substitution
-        return composite_substitution(plate, rgba, placement, alpha=alpha)
+        # During reappear the log is already seated; only animate the forward drop.
+        reversing = self.effect is not None and self.effect.reverse
+        drop = 0.0
+        if not reversing:
+            drop_s = self.cfg.get("substitution_drop_seconds", 0.55)
+            drop_h = placement["height"] * self.cfg.get("substitution_drop_height", 1.15)
+            drop = drop_y_offset(now - self.sub_t0, drop_s, drop_h)
+        return composite_substitution(plate, rgba, placement, alpha=alpha, drop=drop)
 
     def _live_bbox(self, mask):
         """Person bbox from a 1/8 mask (cheap), so the clones follow you as you move; fire-time bbox if empty."""
@@ -361,8 +414,11 @@ class Meetingport:
             if g is not None and g != "palm" and g not in self.cfg["enabled_effects"]: g = None
             snap_g, snap_anc = self.snap_watch.update(hands, now)
             audio_snap = bool(self.mic and self.mic.poll(now))
-            # A held two-hand / named sign wins over a snap motion on the same frame.
-            snap_ok = self.snap_gate.update(bool(snap_g) and g is None, audio_snap, now)
+            # Named signs and two-hand seals win: never let a snap steal a Naruto/clone/kame charge.
+            two_hand_block = bool(self.cfg.get("snap_one_hand_only", True)) and len(hands) >= 2
+            named_blocks = g is not None or two_hand_block
+            snap_ok = self.snap_gate.update(bool(snap_g) and not named_blocks,
+                                            audio_snap and not two_hand_block, now)
             if snap_ok and "snap" in self.cfg["enabled_effects"]:
                 g, anchor = G.SNAP, snap_anc or anchor
             H = frame.shape[0]

@@ -67,9 +67,29 @@ def test_naruto_two_hands_together():
     b = [(x - 0.04 + 0.04, y) for x, y in b]
     assert G.classify([a, b], *FACE)[0] == G.NARUTO
 
+def test_naruto_flat_palms_pressed_at_chest():
+    """The classic seal: both open-ish palms pressed together near the chest."""
+    a = hand(cx=0.47, cy=0.72, s=0.11)
+    b = [(1.0 - x, y) for x, y in hand(cx=0.47, cy=0.72, s=0.11)]
+    # Pull them together so the tips touch.
+    shift = 0.02
+    b = [(x - shift, y) for x, y in b]
+    assert G.classify([a, b], *FACE)[0] == G.NARUTO
+
+def test_naruto_two_fists_pressed_is_not_a_seal():
+    a = hand(ext=(), thumb=False, cx=0.48, cy=0.75)
+    b = [(1.0 - x, y) for x, y in hand(ext=(), thumb=False, cx=0.48, cy=0.75)]
+    assert G.classify([a, b], *FACE)[0] != G.NARUTO
+
 def test_two_hands_apart_not_naruto():
     a = hand(cx=0.2); b = [(1 - x, y) for x, y in hand(cx=0.2)]
     assert G.classify([a, b], *FACE)[0] == G.PALM   # two open palms far apart = reappear, not seal
+
+def test_naruto_beats_a_one_hand_snap_pose_on_the_same_frame():
+    """While both hands form the seal, classify returns naruto (snap is handled separately and blocked)."""
+    a = hand(ext=("index", "middle", "ring", "pinky"), cx=0.47, cy=0.72)
+    b = [(1.0 - x + 0.02, y) for x, y in hand(ext=("index", "middle", "ring", "pinky"), cx=0.47, cy=0.72)]
+    assert G.classify([a, b], *FACE)[0] == G.NARUTO
 
 # ---------- trigger machine ----------
 def run(seq, fps=30, cfg=None):

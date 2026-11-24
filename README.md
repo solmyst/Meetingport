@@ -12,7 +12,7 @@ You need an access password from the person who shared Meetingport with you. The
 
 ![Naruto substitution: a hand seal, a puff of smoke, and a wooden log left where you were sitting](docs/demo-naruto.gif)
 
-*Naruto substitution (Kawarimi). Smoke, then a wooden log in your chair.*
+*Naruto substitution (Kawarimi). Smoke, then a wooden log falls into your chair.*
 
 Inspired by [@nicosmartworking](https://github.com/Nicovic17)'s Meetingport reel and Raj Patel's snap reel. This is an independent rewrite: no copied code and no anime assets. Full credits are at the bottom.
 
@@ -47,11 +47,11 @@ Hold a sign until the small ring near your hand fills. The ring is drawn in the 
 | Gesture | How to do it | What the call sees |
 |---|---|---|
 | **Goku Instant Transmission** | Index and middle fingers straight and together, tips on your forehead. Hold **0.7 s**. | A blue-white aura and rising speed lines, a flash, a flickering afterimage, then you are gone (about 1.0 s). |
-| **Naruto substitution** (Kawarimi) | Both hands pressed together in a seal in front of your chest. Hold **0.6 s**. | A smoke puff (about 1.3 s), then a wooden log where you were, with a soft contact shadow. Set `naruto_substitution` to `"none"` for the empty room, or `"image"` and point `substitution_image` at a PNG with alpha. `substitution_scale` resizes it. Press `L` in the preview to cycle. The open-palm return hides the log under the same smoke. |
+| **Naruto substitution** (Kawarimi) | Both flat-ish palms pressed together in a seal in front of your chest (at least two fingers extended on each hand). Hold **0.6 s**. | A smoke puff (about 1.3 s). A wooden log falls in from above with a short bounce and lands centered on where you were sitting (`substitution_drop_seconds`, `substitution_drop_height`), with a soft contact shadow. Set `naruto_substitution` to `"none"` for the empty room, or `"image"` and point `substitution_image` at a PNG with alpha. `substitution_scale` resizes it. Press `L` in the preview to cycle. The open-palm return hides the log under the same smoke. |
 | **Gojo Infinite Void** | Index and middle fingers crossed. Hold **0.8 s**. | A dark sphere grows from your hand over about 1.1 s into a starfield and nebula. You stay fully visible, with a soft rim light. The domain stays until you make the Gojo sign again or hold an open palm. Set `gojo_void_seconds` to a positive number and it collapses that many seconds after it is fully open. `gojo_void_caption` (on by default) fades the title in and out. |
 | **Shadow Clone** | Both hands up, each with index and middle fingers straight and the ring and pinky curled. Lay one hand's two fingers across the other's so they make a plus or an X. Hold **0.7 s**. | Smoke, then 2 live copies of you (4 when there is room on both sides). They copy your movement until you make the clone sign again or hold an open palm, which dismisses them in smoke. You stay visible the whole time. |
 | **Kamehameha** | Heels of both hands together in front of you, fingers open and spread or cupped, fingertips of the two hands apart (an open mouth, not the flat Naruto seal). Hold **0.7 s**. | A blue ball charges between your hands, then a blue-white beam crosses the frame with bloom and a small shake (about 1.9 s). You stay where you are. One shot. |
-| **Snap to dust** | Pinch your thumb and middle fingertip together, then flick the middle finger down toward your palm within about **0.4 s**. Or press `S`. | You break into coloured flakes that drift away over about 2 s (`snap_particles`, default 6000). The empty room remains. The microphone is muted at the same time (see [Auto-mute](#auto-mute)). An open palm plays it in reverse and unmutes you. Set `snap_reveal` to `"log"` to leave the Kawarimi log instead of the empty room. |
+| **Snap to dust** | Hold a snap-ready pinch (thumb on the middle fingertip, ring and pinky curled, index not an open palm) for about **0.10 s**, then flick the middle finger sharply toward the palm within about **0.28 s**. The hand should stay roughly still, and only one hand should be in view. Or press `S`. | You break into coloured flakes that drift away over about 2 s (`snap_particles`, default 6000). The empty room remains. The microphone is muted at the same time (see [Auto-mute](#auto-mute)). An open palm plays it in reverse and unmutes you. Set `snap_reveal` to `"log"` to leave a falling Kawarimi log instead of the empty room. |
 | **Reappear** | Open palm, all five fingers spread. Hold **1.0 s**. While you are already gone, holding Goku, Naruto, or Snap again also brings you back. | The last vanish effect plays in reverse (a little faster: 0.85×, except Gojo, which uses the same timing). |
 
 A few rules keep signs from stepping on each other:
@@ -59,8 +59,8 @@ A few rules keep signs from stepping on each other:
 - Vanish signs (Goku, Naruto, Snap) and the palm are the ones that remove you or bring you back. While you are gone, Gojo, Shadow Clone, and Kamehameha do nothing.
 - Gojo never removes you. It toggles Infinite Void. While the void is open, Shadow Clone and Kamehameha still play on top of it. Goku, Naruto, and Snap are ignored until the domain is dismissed. An open palm dismisses the void first. If clones are also out, a second palm dismisses the clones.
 - While clones are out and the void is closed, the clone sign, an open palm, or the Gojo sign are the signs that do something. Vanish and Kamehameha wait until the clones are gone.
-- Two-hand signs are checked before one-hand signs, so the clone sign is not read as Gojo's crossed fingers. A held two-hand sign on the same frame wins over a snap, so the Naruto seal and the clone sign are not read as a snap.
-- The snap is a motion, not a held pose, so it fires when the flick finishes. There is no charge ring to fill. `hold.snap` stays `0`.
+- Two-hand signs are checked before one-hand signs, so the clone sign is not read as Gojo's crossed fingers. While both hands are visible (`snap_one_hand_only`, default on), the snap detector stays off so a forming Naruto, clone, or Kamehameha seal is never stolen by a dust dissolve.
+- The snap is a motion with a short pinch dwell, not a held pose. It fires when the flick finishes. There is no charge ring to fill. `hold.snap` stays `0`. Brief thumb-middle taps and waving wrists while talking do not count.
 - Keyboard keys fire immediately. The hold times above are for the camera.
 
 Sounds are synthesized by the app (`mport/sounds.py`) and play on your speakers. They are not sent into the call.
@@ -92,11 +92,11 @@ flowchart LR
 4. **Effects.** NumPy and OpenCV particles, blended with alpha (`mport/effects.py`). Vanish effects are a function of time, which is why reappear can play them backwards. The snap samples flakes from your pixels at the trigger moment and moves them through a noise field. The Infinite Void backdrop (`mport/void.py`) is precomputed and drawn under the person mask.
 5. **Auto-mute.** A snap vanish mutes the microphone. The open-palm return restores it. Details are in [Auto-mute](#auto-mute) and [Permissions](#permissions). Recorded files and the test clips never touch the real microphone.
 6. **Snap trigger.** `snap_trigger` chooses what counts as a snap:
-   - `"gesture"` (default): the pinch-and-flick alone.
+   - `"gesture"` (default): a deliberate pinch-and-flick only (`mport/gestures.py`). Requires a short pinch dwell, a sharp middle-finger flick, a fairly still wrist, snap-ready finger posture, and (by default) a single visible hand.
    - `"audio"`: a short, bright click on the microphone (`mport/audio.py`). Needs `sounddevice` and a working mic.
    - `"both"`: the gesture and a click within 300 ms.
    - `"either"`: the gesture or a click.
-   If the microphone cannot be opened, audio, both, and either all switch to the gesture and the app prints `snap trigger falling back to gesture (no mic)`.
+   If the microphone cannot be opened, audio, both, and either all switch to the gesture and the app prints `snap trigger falling back to gesture (no mic)`. Two visible hands also block the snap so a Naruto seal can form.
 7. **Output.** pyvirtualcam writes frames to a virtual camera: OBS Virtual Camera on macOS and Windows, v4l2loopback on Linux. A preview window is on by default. `--out clip.mp4` also records the result.
 
 The MediaPipe model files (Apache-2.0) download into `models/` on first use. That folder is gitignored.
@@ -273,11 +273,21 @@ Values below are the ones shipped in `config.json`. Keys marked *built-in* are a
 | `naruto_substitution` | `"log"` | `"log"`, `"none"` (empty room), or `"image"`. |
 | `substitution_image` | `""` | PNG with an alpha channel, used when the mode is `"image"`. |
 | `substitution_scale` | `1.0` | Size multiplier for the log or the custom image. A value `<= 0` is treated as `1.0`. |
+| `substitution_drop_seconds` | `0.55` | How long the Kawarimi log takes to fall in (gravity ease-in + a short bounce), timed with the smoke. `0` seats it immediately. |
+| `substitution_drop_height` | `1.15` | Drop start height as a multiple of the log height. The log lands on the person's last seat. |
 | `snap_trigger` | `"gesture"` | `"gesture"`, `"audio"`, `"both"`, or `"either"`. |
 | `snap_reveal` | `"room"` | What a snap leaves behind: `"room"` or `"log"`. |
 | `snap_particles` | `6000` | Flakes in the snap. Clamped to 200–20000. |
 | `snap_auto_mute` | `true` | Mute the microphone when a snap vanish fires on a live camera. |
 | `auto_unmute_on_reappear` | `true` | Restore the microphone when you reappear after a snap. |
+| `snap_pinch_frac` | `0.18` | Thumb-middle distance, in hand sizes, that counts as a snap pinch. Smaller is stricter. |
+| `snap_min_pinch` | `0.10` | Seconds the snap-ready pinch must be held before a flick can complete. |
+| `snap_flick_window` | `0.28` | Max seconds from pinch release to a completed flick. |
+| `snap_min_sep` | `0.38` | Thumb-middle separation after the flick, in hand sizes. |
+| `snap_min_travel` | `0.30` | Middle-tip travel toward the palm, in hand sizes. |
+| `snap_max_wrist_move` | `0.12` | Wrist motion allowed during the gesture, in hand sizes. Talking waves are rejected. |
+| `snap_gesture_cooldown` | `0.85` | Refractory after a completed snap gesture before another can arm. |
+| `snap_one_hand_only` | `true` | Never arm or fire a snap while two hands are visible (protects Naruto / clone / Kamehameha). |
 | `mute_method` | `"volume"` | `"volume"` sets the system input level to 0. `"hotkey"` sends the meeting app's mute shortcut. |
 | `meeting_app` | `"meet"` | Used by `mute_method: "hotkey"`. `"meet"`, `"zoom"`, `"teams"`. `"google meet"` and `"microsoft teams"` are accepted. Anything else is treated as Meet. |
 | `recapture_countdown` | *built-in* `3.0` | Seconds the `B` key waits before the clean recapture. |
@@ -288,7 +298,7 @@ Values below are the ones shipped in `config.json`. Keys marked *built-in* are a
 | `log_json` | *built-in* none | Write the trigger event list to this JSON file. |
 | `max_seconds` | *built-in* none | Stop after this many seconds. Used by tests and recordings. |
 
-`snap_particles`, `snap_trigger`, `snap_reveal`, `naruto_substitution`, `substitution_scale`, `mute_method`, and `meeting_app` are normalized when the config is loaded, so a typo falls back to the default instead of crashing.
+`snap_particles`, `snap_trigger`, `snap_reveal`, the `snap_*` detector knobs, `naruto_substitution`, `substitution_scale`, `substitution_drop_seconds`, `substitution_drop_height`, `mute_method`, and `meeting_app` are normalized when the config is loaded, so a typo falls back to the default instead of crashing.
 
 ### Auto-mute
 
@@ -363,7 +373,7 @@ The pinned build is MediaPipe 0.10.31, which publishes wheels for Apple Silicon,
 Hold it for the full time and watch the ring in the preview. There is a 2 second cooldown after every effect. Keep the whole hand in frame, in decent light, and facing the camera. Crossed fingers (Gojo) and the clone X are the ones the hand model drops most often. For the clone sign, cross the fingers lower or closer to a plus. For the snap, hold the pinch where the camera can see it and flick the middle finger toward the palm, or press `S`. A vanish sign is ignored while the void is open or while clones are out. Goku also needs your face in frame, because the forehead check uses the face detector.
 
 **The snap fires when I did not snap, or it never fires.**
-`"gesture"` follows the pinch and flick. `"both"` also requires a mic click within 300 ms, which rejects other hand motion. `"audio"` and `"either"` can fire on other sharp clicks (a pen cap, a clap). If the mic will not open, the app falls back to the gesture and prints a line.
+The default gesture path is strict on purpose: hold a snap-ready pinch (thumb on middle, ring and pinky curled) for `snap_min_pinch`, then flick quickly without waving the wrist. Casual talking-hand motion and brief thumb-middle taps should not fire. While both hands are in view, the snap stays off so a Naruto seal can charge. If it still feels loose, lower `snap_pinch_frac` or raise `snap_min_pinch` / `snap_min_travel`. If a real snap is missed, hold the pinch clearly in view, keep the hand still, flick the middle finger toward the palm (not just open the hand), or press `S`. `"both"` also requires a mic click within 300 ms. `"audio"` and `"either"` can fire on other sharp clicks (a pen cap, a clap). If the mic will not open, the app falls back to the gesture and prints a line.
 
 **OBS Virtual Camera is missing in Chrome, Meet, Zoom, or Teams.**
 Start the virtual camera in OBS once so the device exists, then quit OBS and start Meetingport so something is actually streaming. Reload the Meet tab, or restart Zoom or Teams. On macOS, confirm the OBS extension is allowed. On Linux, reload v4l2loopback with `exclusive_caps=1` and restart the browser. Chrome also needs site permission to use cameras.
@@ -424,7 +434,8 @@ What the tests cover:
 - Real MediaPipe landmarks from MediaPipe's Apache-2.0 sample photos in `tests/assets/`: two open palms classify as palm, and fist, pointing, thumbs-up, and V are not taken as a vanish sign.
 - Shadow Clone and Kamehameha on synthetic landmarks, plus end-to-end runs: clones persist and then dismiss, and Kamehameha leaves you in place.
 - Infinite Void: you stay visible, the background is replaced, the sphere opens and collapses, and the caption flag is honored.
-- Kawarimi log placement, scale, compositing, and an end-to-end Naruto vanish that leaves a log and removes it on reappear.
+- Kawarimi log placement, scale, the fall-in drop curve, compositing, and an end-to-end Naruto vanish that leaves a log and removes it on reappear.
+- Snap false-positive guards: talking-hand sequences, brief pinches, waving wrists, and two-hand seals must not fire; a deliberate pinch-and-flick still does.
 - Snap: the pinch-then-flick detector, SnapGate modes, the audio onset detector on synthetic clicks, mute-command construction with a fake subprocess, forward and reverse dust, and an end-to-end `snap@2.0,palm@4.4` run.
 - The full pipeline on synthetic clips (a drawn room plus a person cut from a sample photo), including the diff segmenter and a real open-palm photo that triggers the reappear by gesture.
 - The access password: a live camera and the virtual camera require it, a video file does not, and a wrong password exits before the camera is opened.

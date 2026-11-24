@@ -13,7 +13,7 @@ from mport.mute import (
     macos_hotkey_cmd, linux_get_mute_cmd, linux_set_mute_cmd, windows_hotkey_sendkeys,
     parse_input_volume, parse_pactl_mute, normalize_app,
 )
-from mport.app import parse, normalize_snap, snap_gate_for, DEFAULTS
+from mport.app import parse, normalize_snap, snap_gate_for, snap_watcher_for, DEFAULTS
 
 cv2 = pytest.importorskip("cv2")
 
@@ -70,13 +70,30 @@ def pinch_pt(curl=0.4, **kw):
 def test_pinch_when_thumb_on_middle():
     h = snap_hand(curl=0.4, thumb_on_middle=True)
     assert G.is_snap_pinch(h)
+    assert G.is_snap_ready(h)
     assert G.classify([h], *FACE)[0] is None          # not a held Meetingport sign
 
 
 def test_open_palm_is_not_a_pinch():
     h = hand()
     assert not G.is_snap_pinch(h)
+    assert not G.is_snap_ready(h)
     assert G.classify([h], *FACE)[0] == G.PALM
+
+
+def test_loose_thumb_middle_touch_is_not_ready():
+    """Incidental proximity (talking hands) must not arm a snap."""
+    h = snap_hand(curl=0.4, thumb_on_middle=False)
+    # Thumb is out to the side by default: not a pinch at all.
+    assert not G.is_snap_pinch(h)
+    assert not G.is_snap_ready(h)
+    # A loose near-miss (thumb close but outside the tight frac) is also rejected.
+    pts = list(h)
+    mid = pts[12]
+    s = G.hand_size(pts)
+    pts[4] = (mid[0] + 0.22 * s, mid[1])
+    assert not G.is_snap_pinch(pts, frac=0.18)
+    assert not G.is_snap_ready(pts)
 
 
 def test_fist_may_look_close_but_is_not_a_snap_motion():
@@ -88,24 +105,23 @@ def test_fist_may_look_close_but_is_not_a_snap_motion():
 
 
 # ---------- SnapWatcher motion ----------
-def _play(seq, fps=30, watcher=None):
+def _play(seq, fps=30, watcher=None, hands_seq=None):
+    """seq is one hand per frame, or None. hands_seq overrides with a full hands list per frame."""
     w = watcher or G.SnapWatcher()
     hits = []
-    for i, h in enumerate(seq):
-        fired, anc = w.update([h] if h is not None else [], i / fps)
+    for i, item in enumerate(seq if hands_seq is None else hands_seq):
+        if hands_seq is None:
+            hands = [item] if item is not None else []
+        else:
+            hands = item
+        fired, anc = w.update(hands, i / fps)
         if fired:
             hits.append((round(i / fps, 3), anc))
     return hits, w
 
 
-def _snap_sequence(fps=30, pinch_frames=5, flick_curls=(0.55, 0.7, 0.85, 0.95)):
-    """Pinch, then flick the middle finger down toward the palm, thumb stays put."""
-    pinch = snap_hand(curl=0.4, thumb_on_middle=True)
-    # local middle tip at curl 0.4, used as the parked thumb
-    # Reconstruct parked thumb by reading pinch landmark 4 (already on the middle tip)
-    parked = None
-    # We need local parked tip. Easier: build flick hands with thumb_on_middle=False
-    # and thumb_hold = the LOCAL tip at curl 0.4.
+def _snap_sequence(fps=30, pinch_frames=6, flick_curls=(0.55, 0.7, 0.85, 0.95, 1.0)):
+    """Hold a snap-ready pinch, then flick the middle finger toward the palm. Thumb stays put."""
     x, curl0 = -0.1, 0.4
     hold = (x, -1.9 + (-0.8 - (-1.9)) * curl0)
     seq = [snap_hand(curl=0.4, thumb_on_middle=True) for _ in range(pinch_frames)]
@@ -117,8 +133,18 @@ def _snap_sequence(fps=30, pinch_frames=5, flick_curls=(0.55, 0.7, 0.85, 0.95)):
 def test_snap_motion_fires():
     hits, _ = _play(_snap_sequence())
     assert len(hits) == 1
-    # flick starts after 5 pinch frames (0.167s); should fire on the first or second flick frame
-    assert 0.10 <= hits[0][0] <= 0.40
+    # Pinch dwell ~0.2 s, then a quick flick; should complete inside the flick window.
+    assert 0.15 <= hits[0][0] <= 0.45
+
+
+def test_brief_pinch_without_dwell_does_not_fire():
+    """Accidental thumb-middle taps while talking: too short to arm."""
+    x, curl0 = -0.1, 0.4
+    hold = (x, -1.9 + (-0.8 - (-1.9)) * curl0)
+    seq = [snap_hand(curl=0.4, thumb_on_middle=True) for _ in range(2)]   # ~0.067 s < min_pinch
+    seq += [snap_hand(curl=c, thumb_on_middle=False, thumb_hold=hold) for c in (0.7, 0.85, 0.95, 1.0)]
+    hits, _ = _play(seq)
+    assert hits == []
 
 
 def test_pinch_held_without_flick_does_not_fire():
@@ -128,10 +154,10 @@ def test_pinch_held_without_flick_does_not_fire():
 
 
 def test_flick_too_slow_does_not_fire():
-    # pinch, then wait past the 0.4 s window, then flick
+    # pinch, then wait past the flick window, then flick
     x, curl0 = -0.1, 0.4
     hold = (x, -1.9 + (-0.8 - (-1.9)) * curl0)
-    seq = [snap_hand(curl=0.4, thumb_on_middle=True) for _ in range(5)]
+    seq = [snap_hand(curl=0.4, thumb_on_middle=True) for _ in range(6)]
     seq += [None] * 20                                          # 0.67 s gap
     seq += [snap_hand(curl=c, thumb_on_middle=False, thumb_hold=hold) for c in (0.7, 0.85, 0.95)]
     hits, _ = _play(seq)
@@ -142,10 +168,68 @@ def test_unclenching_is_not_a_snap():
     """Middle finger moving *away* from the palm (opening) must not fire."""
     x, curl0 = -0.1, 0.5
     hold = (x, -1.9 + (-0.8 - (-1.9)) * curl0)
-    seq = [snap_hand(curl=0.5, thumb_on_middle=True) for _ in range(5)]
+    seq = [snap_hand(curl=0.5, thumb_on_middle=True) for _ in range(6)]
     seq += [snap_hand(curl=c, thumb_on_middle=False, thumb_hold=hold) for c in (0.35, 0.2, 0.05, 0.0)]
     hits, _ = _play(seq)
     assert hits == []
+
+
+def test_waving_wrist_during_pinch_does_not_fire():
+    """Talking gesticulation: the wrist moves too much for a deliberate snap."""
+    x, curl0 = -0.1, 0.4
+    hold = (x, -1.9 + (-0.8 - (-1.9)) * curl0)
+    seq = []
+    for i in range(6):
+        seq.append(snap_hand(curl=0.4, thumb_on_middle=True, cx=0.55 + 0.04 * i))
+    seq += [snap_hand(curl=c, thumb_on_middle=False, thumb_hold=hold, cx=0.55 + 0.04 * 6)
+            for c in (0.7, 0.85, 0.95, 1.0)]
+    hits, _ = _play(seq)
+    assert hits == []
+
+
+def test_talking_hand_sequences_never_snap():
+    """Synthetic 'casual talking' frames: brief near-pinches, pointing, palms, no deliberate flick."""
+    w = G.SnapWatcher()
+    rng = __import__("random").Random(0)
+    hits = []
+    for i in range(180):                                      # 6 s at 30 fps
+        kind = rng.choice(["point", "palm", "near", "fist", "wave"] * 2 + ["none"])
+        if kind == "point":
+            h = hand(ext=("index",), thumb=False, cx=0.5 + 0.05 * math.sin(i / 7), cy=0.55)
+        elif kind == "palm":
+            h = hand(cx=0.55, cy=0.6 + 0.03 * math.sin(i / 5))
+        elif kind == "near":
+            # Thumb briefly near middle without a held snap-ready pose / flick.
+            h = snap_hand(curl=0.35, thumb_on_middle=True, cx=0.5 + 0.08 * math.sin(i / 4))
+            if i % 5 != 0:
+                h = snap_hand(curl=0.2, thumb_on_middle=False, cx=0.5 + 0.08 * math.sin(i / 4))
+        elif kind == "fist":
+            h = hand(ext=(), thumb=False, cx=0.5, cy=0.65)
+        elif kind == "wave":
+            h = hand(ext=("index", "middle", "ring", "pinky"), cx=0.4 + 0.15 * math.sin(i / 3), cy=0.5)
+        else:
+            h = None
+        fired, _ = w.update([h] if h is not None else [], i / 30)
+        if fired:
+            hits.append(i / 30)
+    assert hits == []
+
+
+def test_two_hands_block_snap_even_with_a_flick():
+    """Naruto / clone / kame forming: never complete a snap while both hands are visible."""
+    x, curl0 = -0.1, 0.4
+    hold = (x, -1.9 + (-0.8 - (-1.9)) * curl0)
+    other = hand(ext=("index", "middle"), thumb=False, cx=0.35, cy=0.75)
+    hands_seq = []
+    for _ in range(6):
+        hands_seq.append([snap_hand(curl=0.4, thumb_on_middle=True), other])
+    for c in (0.7, 0.85, 0.95, 1.0):
+        hands_seq.append([snap_hand(curl=c, thumb_on_middle=False, thumb_hold=hold), other])
+    hits, _ = _play(None, hands_seq=hands_seq)
+    assert hits == []
+    # Same motion with one hand still fires.
+    hits1, _ = _play(_snap_sequence())
+    assert len(hits1) == 1
 
 
 def test_snap_does_not_collide_with_named_signs():
@@ -157,6 +241,13 @@ def test_snap_does_not_collide_with_named_signs():
         w = G.SnapWatcher()
         h = builder()
         assert not any(w.update([h], i / 30)[0] for i in range(12)), name
+
+
+def test_snap_watcher_for_reads_config():
+    cfg = normalize_snap({"snap_min_pinch": 0.2, "snap_one_hand_only": False})
+    w = snap_watcher_for(cfg)
+    assert w.min_pinch == 0.2 and w.one_hand_only is False
+    assert abs(w.pinch_frac - DEFAULTS["snap_pinch_frac"]) < 1e-9
 
 
 # ---------- TriggerMachine: snap is a vanish, instant, respects cooldown / void / clones ----------
@@ -440,8 +531,15 @@ def test_parse_snap_flags_and_defaults():
     assert cfg["snap_particles"] == 6000
     assert "snap" in cfg["enabled_effects"]
     assert cfg["hold"]["snap"] == 0.0
-    bad = normalize_snap({"snap_trigger": "nope", "snap_particles": "abc", "snap_reveal": "banana"})
+    assert cfg["snap_pinch_frac"] == DEFAULTS["snap_pinch_frac"]
+    assert cfg["snap_min_pinch"] == DEFAULTS["snap_min_pinch"]
+    assert cfg["snap_flick_window"] == DEFAULTS["snap_flick_window"]
+    assert cfg["snap_one_hand_only"] is True
+    bad = normalize_snap({"snap_trigger": "nope", "snap_particles": "abc", "snap_reveal": "banana",
+                          "snap_min_pinch": "nope", "snap_pinch_frac": 9})
     assert bad["snap_trigger"] == "gesture" and bad["snap_reveal"] == "room" and bad["snap_particles"] == 6000
+    assert bad["snap_min_pinch"] == DEFAULTS["snap_min_pinch"]
+    assert bad["snap_pinch_frac"] == 0.35                                  # clamped to the high end
 
 
 # ---------- End-to-end on the synthetic clip (diff segmenter, no MediaPipe needed) ----------

@@ -56,13 +56,19 @@ def is_gojo(h, forehead=None, face_w=None):
     return fingers_crossed(h)
 
 def is_naruto(hands):
-    """Two hands pressed together (hand seal): wrists and fingertips of both hands close, near-ish chest height."""
+    """Two hands pressed together (hand seal): flat-ish palms at chest height, tips and wrists close.
+
+    Each hand needs at least two fingers extended so a pair of fists does not count. Thresholds are
+    a little loose so a held seal still reads when MediaPipe jitters the landmarks.
+    """
     if len(hands) < 2: return False
     a, b = hands[0], hands[1]
+    if sum(extended(a, f) for f in MCP) < 2 or sum(extended(b, f) for f in MCP) < 2:
+        return False
     s = (hand_size(a) + hand_size(b)) / 2
-    tips_close = min(_d(a[TIP[f]], b[TIP[g]]) for f in TIP for g in TIP) < 0.45 * s
-    wrists_close = _d(a[WRIST], b[WRIST]) < 1.3 * s
-    centers = _d(_center(a), _center(b)) < 1.0 * s
+    tips_close = min(_d(a[TIP[f]], b[TIP[g]]) for f in TIP for g in TIP) < 0.55 * s
+    wrists_close = _d(a[WRIST], b[WRIST]) < 1.45 * s
+    centers = _d(_center(a), _center(b)) < 1.15 * s
     return tips_close and wrists_close and centers
 
 def _center(h): return (sum(p[0] for p in h) / 21, sum(p[1] for p in h) / 21)
@@ -124,33 +130,70 @@ def classify(hands, forehead=None, face_w=None):
         if is_open_palm(h): return PALM, _center(h)
     return None, None
 
-def is_snap_pinch(h, frac=0.25):
+def is_snap_pinch(h, frac=0.18):
     """Thumb tip and middle fingertip pressed together (the start of a snap)."""
     return _d(h[THUMB_TIP], h[TIP["middle"]]) < frac * hand_size(h)
 
 
-class SnapWatcher:
-    """Pinch, then a quick middle-finger flick toward the palm, within flick_window seconds.
+def is_snap_ready(h, pinch_frac=0.18):
+    """A deliberate snap pose: tight pinch, ring+pinky curled, not an open palm or a fist.
 
-    This is a motion, not a held pose: update() returns (True, anchor) only on the
-    completing frame. Pure Python, no MediaPipe, unit-testable with synthetic landmarks.
+    Index is usually extended or only lightly curled. Middle tip stays out of the palm so the
+    next move can still be a flick toward the wrist.
     """
-    def __init__(self, pinch_frac=0.25, flick_window=0.40, min_sep=0.30,
-                 min_travel=0.22, min_dt=0.033):
-        self.pinch_frac = pinch_frac
-        self.flick_window = flick_window
-        self.min_sep = min_sep          # thumb-middle distance after the flick, in hand sizes
-        self.min_travel = min_travel    # middle tip travel toward the palm, in hand sizes
-        self.min_dt = min_dt
+    if not is_snap_pinch(h, pinch_frac):
+        return False
+    if is_open_palm(h):
+        return False
+    if not (curled(h, "ring") and curled(h, "pinky")):
+        return False
+    s = hand_size(h)
+    # Middle still out enough to flick; a fist with the thumb near the knuckles is not a snap.
+    if _d(h[TIP["middle"]], h[WRIST]) < 0.70 * s:
+        return False
+    # Index should look like a snap hand (extended or only lightly curled), not a thumbs-up.
+    if curled(h, "index") and _d(h[TIP["index"]], h[WRIST]) < 0.75 * s:
+        return False
+    return True
+
+
+class SnapWatcher:
+    """Deliberate finger snap: hold a snap-ready pinch, then flick the middle finger toward the palm.
+
+    Strict on purpose. Casual talking-hand motion (brief thumb-middle touches, waving wrists,
+    two-hand seals) must not fire. update() returns (True, anchor) only on the completing frame.
+    Pure Python, no MediaPipe, unit-testable with synthetic landmarks.
+    """
+    def __init__(self, pinch_frac=0.18, min_pinch=0.10, flick_window=0.28, min_sep=0.38,
+                 min_travel=0.30, min_dt=0.040, max_wrist_move=0.12, cooldown=0.85,
+                 one_hand_only=True):
+        self.pinch_frac = float(pinch_frac)
+        self.min_pinch = float(min_pinch)       # seconds the pinch must be held before a flick counts
+        self.flick_window = float(flick_window) # max seconds from pinch release to completed flick
+        self.min_sep = float(min_sep)           # thumb-middle distance after the flick, in hand sizes
+        self.min_travel = float(min_travel)     # middle tip travel toward the palm, in hand sizes
+        self.min_dt = float(min_dt)
+        self.max_wrist_move = float(max_wrist_move)  # wrist motion allowed during the gesture, hand sizes
+        self.cooldown = float(cooldown)         # refractory after a fire (or a failed flick)
+        self.one_hand_only = bool(one_hand_only)
         self._tracks = []
+        self._cool_until = -1e9
 
     def reset(self):
         self._tracks = []
+        self._cool_until = -1e9
 
     def update(self, hands, now):
-        """Return (fired, anchor_xy or None). fires at most once, then clears tracks."""
-        fired, anchor = False, None
+        """Return (fired, anchor_xy or None). Fires at most once, then clears tracks."""
         hands = list(hands or [])
+        # Two-hand seals (Naruto / clone / Kamehameha) always win: never arm or complete a snap.
+        if self.one_hand_only and len(hands) >= 2:
+            self._tracks = []
+            return False, None
+        if now < self._cool_until:
+            self._tracks = []
+            return False, None
+        fired, anchor = False, None
         used = set()
         for tr in self._tracks:
             j = self._match(tr, hands, used)
@@ -163,17 +206,19 @@ class SnapWatcher:
         for j, h in enumerate(hands):
             if j in used:
                 continue
-            if is_snap_pinch(h, self.pinch_frac):
+            if is_snap_ready(h, self.pinch_frac):
                 self._tracks.append(self._new(h, now))
-        self._tracks = [tr for tr in self._tracks if now - tr["last"] <= self.flick_window + 0.08]
+        self._tracks = [tr for tr in self._tracks if now - tr["last"] <= self.flick_window + 0.10]
         if fired:
             self._tracks = []
+            self._cool_until = now + self.cooldown
         return fired, anchor
 
     def _new(self, h, now):
         return {
-            "pinch_t": now, "last": now,
-            "middle": h[TIP["middle"]], "thumb": h[THUMB_TIP], "wrist": h[WRIST],
+            "pinch_start": now, "pinch_t": now, "last": now, "held": False,
+            "middle": h[TIP["middle"]], "thumb": h[THUMB_TIP],
+            "wrist0": h[WRIST], "wrist": h[WRIST],
             "size": hand_size(h),
         }
 
@@ -187,17 +232,37 @@ class SnapWatcher:
                 best, bd = j, d
         return best
 
+    def _wrist_ok(self, tr, h):
+        return _d(h[WRIST], tr["wrist0"]) <= self.max_wrist_move * tr["size"]
+
     def _step(self, tr, h, now):
         tr["last"] = now
-        if is_snap_pinch(h, self.pinch_frac):
+        if not self._wrist_ok(tr, h):
+            # Talking / waving: abandon this track.
+            tr["pinch_start"] = now
+            tr["held"] = False
+            tr["wrist0"] = h[WRIST]
+            tr["wrist"] = h[WRIST]
+            tr["size"] = hand_size(h)
+            return False, None
+        if is_snap_ready(h, self.pinch_frac):
+            # Keep refreshing the pinch sample, but do not reset pinch_start (dwell accumulates).
+            if now - tr["pinch_start"] >= self.min_pinch:
+                tr["held"] = True
             tr["pinch_t"] = now
             tr["middle"] = h[TIP["middle"]]
             tr["thumb"] = h[THUMB_TIP]
             tr["wrist"] = h[WRIST]
             tr["size"] = hand_size(h)
             return False, None
+        if not tr["held"]:
+            # Released before the minimum pinch dwell: ignore.
+            return False, None
         dt = now - tr["pinch_t"]
         if dt > self.flick_window or dt < self.min_dt:
+            return False, None
+        # Posture after the flick: ring+pinky still curled; not an open palm unclench.
+        if is_open_palm(h) or not (curled(h, "ring") and curled(h, "pinky")):
             return False, None
         s = tr["size"]
         sep = _d(h[THUMB_TIP], h[TIP["middle"]]) / s

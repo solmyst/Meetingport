@@ -4,10 +4,11 @@ import numpy as np, pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 cv2 = pytest.importorskip("cv2")
 from mport.substitution import (
-    LOG_ASPECT, LOG_HEIGHT_FRAC, composite_substitution, generate_procedural_log,
-    load_substitution_image, log_placement, person_bbox, prepare_substitution,
+    DROP_FALL_FRAC, LOG_ASPECT, LOG_HEIGHT_FRAC, composite_substitution, drop_y_offset,
+    generate_procedural_log, load_substitution_image, log_placement, person_bbox,
+    prepare_substitution,
 )
-from mport.app import Meetingport, normalize_substitution, parse
+from mport.app import Meetingport, normalize_substitution, parse, DEFAULTS
 from mport.effects import Effect, naruto_visibility
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -97,6 +98,47 @@ def test_normalize_coerces_bad_values():
     assert normalize_substitution({"substitution_scale": -2})["substitution_scale"] == 1.0
     assert normalize_substitution({"substitution_scale": "nope"})["substitution_scale"] == 1.0
     assert normalize_substitution({"substitution_image": None})["substitution_image"] == ""
+    assert normalize_substitution({})["substitution_drop_seconds"] == DEFAULTS["substitution_drop_seconds"]
+    assert normalize_substitution({"substitution_drop_seconds": "nope"})["substitution_drop_seconds"] == DEFAULTS["substitution_drop_seconds"]
+    assert normalize_substitution({"substitution_drop_height": 9})["substitution_drop_height"] == 4.0
+
+
+def test_drop_y_offset_falls_then_bounces_then_settles():
+    h = 100.0
+    assert drop_y_offset(0.0, 0.55, h) == pytest.approx(h)
+    # Mid-fall: still above the seat, lower than the start (ease-in).
+    mid_t = 0.55 * DROP_FALL_FRAC * 0.5
+    mid = drop_y_offset(mid_t, 0.55, h)
+    assert 0 < mid < h
+    # Just after the land point: a small bounce above the seat.
+    land_t = 0.55 * DROP_FALL_FRAC
+    assert drop_y_offset(land_t, 0.55, h) == pytest.approx(0.0, abs=1e-6)
+    bounce = drop_y_offset(land_t + 0.05, 0.55, h)
+    assert bounce > 0
+    assert bounce < h * 0.15
+    # Done: seated.
+    assert drop_y_offset(0.55, 0.55, h) == 0.0
+    assert drop_y_offset(1.0, 0.55, h) == 0.0
+    assert drop_y_offset(0.2, 0.0, h) == 0.0
+
+
+def test_composite_drop_raises_the_log_above_the_seat():
+    plate = np.full((180, 320, 3), 200, np.float32)
+    mask = np.zeros((180, 320), np.float32); mask[30:160, 110:210] = 1
+    rgba, place = prepare_substitution("log", mask, plate.shape)
+    seated = composite_substitution(plate, rgba, place, alpha=1.0, drop=0.0)
+    falling = composite_substitution(plate, rgba, place, alpha=1.0, drop=place["height"] * 0.9)
+    # The seat band is closer to the empty plate while the log is still high.
+    by, cx = int(place["bottom"]), int(place["cx"])
+    band = np.s_[max(0, by - 8):min(180, by + 2), max(0, cx - 18):min(320, cx + 18)]
+    assert float(np.abs(falling[band] - plate[band]).mean()) < float(np.abs(seated[band] - plate[band]).mean())
+    # Changed pixels of the falling log sit higher in the frame than the seated log.
+    def mean_y(img):
+        delta = np.abs(img - plate).mean(axis=2)
+        ys, xs = np.where(delta > 8)
+        assert len(ys) > 40
+        return float(ys.mean())
+    assert mean_y(falling) < mean_y(seated) - 10
 
 
 # ---------- asset + composite ----------
