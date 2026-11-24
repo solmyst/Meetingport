@@ -242,7 +242,7 @@ While you are already gone, every key except `J` brings you back. `J` does nothi
 
 ## Configuration
 
-`config.json` is loaded with `--config`. Command-line flags override it. If you run `python meetingport.py` with no config file, the built-in defaults apply (`virtualcam` and `mirror` are off in that case). `./run.sh` and `run.bat` always pass `config.json`, where both are on.
+`config.json` is loaded with `--config`. Command-line flags override it. If you run `python meetingport.py` with no config file, the built-in defaults apply (`virtualcam` and `mirror` are off in that case). `./run.sh` and `run.bat` always pass `config.json`, where `virtualcam` is on and `mirror` is off so the feed matches a normal webcam / Google Meet camera (not a selfie mirror).
 
 Values below are the ones shipped in `config.json`. Keys marked *built-in* are absent from that file and fall back to the code default when omitted. Older config files still load: missing `hold` keys are filled in, and unknown snap or substitution values are coerced back to the defaults.
 
@@ -266,7 +266,7 @@ Values below are the ones shipped in `config.json`. Keys marked *built-in* are a
 | `cooldown` | `2.0` | Seconds after an effect before another can charge. |
 | `sound` | `true` | Play synthesized effects on your speakers. |
 | `virtualcam` | `true` | Send frames to the virtual camera. |
-| `mirror` | `true` | Flip the preview and the output horizontally, so a raised right hand looks like a mirror. |
+| `mirror` | `false` | Flip the preview and the output horizontally (selfie-style). Off by default so the virtual camera matches a normal webcam: what Meet/Zoom/Teams send to others is not mirrored. Pass `--mirror` if you want the local mirror look. |
 | `ring_in_output` | `false` | Also draw the charge ring into the virtual camera. Off, the ring stays in the preview. |
 | `gojo_void_seconds` | `0` | How long the domain stays fully open. `0` means until you dismiss it. |
 | `gojo_void_caption` | `true` | Draw the "Domain Expansion: Infinite Void" title. |

@@ -25,7 +25,7 @@
   "cooldown": 2.0,
   "sound": true,
   "virtualcam": true,
-  "mirror": true,
+  "mirror": false,
   "ring_in_output": false,
   "plate_learn": false,
   "gojo_void_seconds": 0,
