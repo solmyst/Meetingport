@@ -1,0 +1,43 @@
+{
+  "source": "0",
+  "width": 1280,
+  "height": 720,
+  "fps": 30,
+  "segmenter": "mediapipe",
+  "plate_seconds": 4,
+  "plate_learn": false,
+  "enabled_effects": [
+    "goku",
+    "naruto",
+    "gojo",
+    "clone",
+    "kamehameha",
+    "snap"
+  ],
+  "hold": {
+    "goku": 0.7,
+    "naruto": 0.6,
+    "gojo": 0.8,
+    "palm": 1.0,
+    "clone": 0.7,
+    "kamehameha": 0.7,
+    "snap": 0.0
+  },
+  "cooldown": 2.0,
+  "sound": true,
+  "virtualcam": true,
+  "mirror": true,
+  "ring_in_output": false,
+  "gojo_void_seconds": 0,
+  "gojo_void_caption": true,
+  "naruto_substitution": "log",
+  "substitution_image": "",
+  "substitution_scale": 1.0,
+  "snap_trigger": "gesture",
+  "snap_reveal": "room",
+  "snap_particles": 6000,
+  "snap_auto_mute": true,
+  "auto_unmute_on_reappear": true,
+  "mute_method": "volume",
+  "meeting_app": "meet"
+}

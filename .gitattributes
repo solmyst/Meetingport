@@ -1,0 +1,8 @@
+* text=auto eol=lf
+run.bat text eol=crlf
+run.ps1 text eol=crlf
+*.png binary
+*.jpg binary
+*.gif binary
+*.wav binary
+*.mp4 binary
