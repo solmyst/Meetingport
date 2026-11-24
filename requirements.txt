@@ -1,0 +1,7 @@
+# Meetingport runtime pins. Install with Python 3.10, 3.11, or 3.12.
+# MediaPipe 0.10.31 ships wheels for Apple Silicon, Windows x64, and Linux x86_64.
+mediapipe==0.10.31
+opencv-python==4.11.0.86
+numpy==2.2.6
+pyvirtualcam==0.15.0
+sounddevice==0.5.6
