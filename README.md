@@ -416,7 +416,7 @@ Type the new password twice and replace `SALT` and `EXPECTED` in `mport/access.p
 python -m pytest -q tests/
 ```
 
-That is the suite CI runs on Ubuntu with Python 3.11 and 3.12 (`.github/workflows/tests.yml`). Install `libgl1`, `libglib2.0-0`, and `libportaudio2` first on a bare Debian or Ubuntu machine so OpenCV and the optional mic library can load.
+That is the suite CI runs on Ubuntu with Python 3.11 and 3.12 (`.github/workflows/tests.yml`). On a bare Debian or Ubuntu machine, install `libgl1`, `libglib2.0-0`, `libportaudio2`, and `pulseaudio`, then start PulseAudio before `import mediapipe`. MediaPipe 0.10.31 imports `sounddevice` while the package loads, and that PortAudio build needs a running server.
 
 What the tests cover:
 
