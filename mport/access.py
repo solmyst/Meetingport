@@ -14,8 +14,8 @@ import secrets
 import sys
 
 SCRYPT_N = 2 ** 14
-SALT = bytes.fromhex("6ec3461276a538578b19dd057410cb4f")
-EXPECTED = bytes.fromhex("c61f5df8e5c4bedfbc245094cdd6a1be920e7ea2825e9c820b363adb60ff49ce")
+SALT = bytes.fromhex("6e51a9afd631ed8cdea360c8215eceea")
+EXPECTED = bytes.fromhex("689aa84608da47514486731a9223a53a0064a9dc296584dd7f322d8448992920")
 
 
 def hash_password(password, salt=None):
